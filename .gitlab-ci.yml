@@ -1,0 +1,150 @@
+# ==============================================
+# CONFIGURATION GITLAB CI/CD AVEC TRIVY - SIMPLE
+# ==============================================
+
+# Définition des étapes du pipeline
+# L'ordre est important : chaque étape attend que la précédente soit terminée
+stages:
+  - build      # Construction de l'image Docker
+  - scan       # Scan de sécurité avec Trivy
+  - deploy     # Déploiement (si scan OK)
+
+# Variables globales utilisées dans tout le pipeline
+variables:
+  # Version de Trivy à utiliser
+  TRIVY_VERSION: "0.48.0"
+  
+  # Image Docker à construire
+  IMAGE_NAME: "${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHORT_SHA}"
+  
+  # Niveau de sévérité minimum pour bloquer le pipeline
+  SEVERITY_THRESHOLD: "HIGH,CRITICAL"
+
+# ==============================================
+# JOB 1: CONSTRUCTION DE L'IMAGE DOCKER
+# ==============================================
+build:image:
+  stage: build
+  
+  # Image Docker utilisée pour ce job
+  image: docker:24
+  
+  # Service Docker-in-Docker nécessaire pour builder
+  services:
+    - docker:24-dind
+  
+  # Commandes à exécuter avant le script principal
+  before_script:
+    - echo "🔐 Connexion au registry GitLab..."
+    - docker login -u ${CI_REGISTRY_USER} -p ${CI_REGISTRY_PASSWORD} ${CI_REGISTRY}
+  
+  # Script principal du job
+  script:
+    - echo "🔨 Construction de l'image Docker..."
+    - docker build -t ${IMAGE_NAME} .
+    
+    - echo "📤 Push de l'image vers le registry..."
+    - docker push ${IMAGE_NAME}
+    
+    - echo "💾 Sauvegarde de l'image pour le scan..."
+    - docker save ${IMAGE_NAME} -o image.tar
+  
+  # Fichiers à conserver pour les jobs suivants
+  artifacts:
+    paths:
+      - image.tar
+    expire_in: 1 hour
+
+# ==============================================
+# JOB 2: SCAN DE SÉCURITÉ AVEC TRIVY
+# ==============================================
+scan:trivy:
+  stage: scan
+  
+  # Utilisation de l'image Docker officielle de Trivy
+  image: 
+    name: ghcr.io/aquasecurity/trivy:${TRIVY_VERSION}
+    entrypoint: [""]
+  
+  # Dépend du job build (récupère l'artifact image.tar)
+  dependencies:
+    - build:image
+  
+  script:
+    - echo "🔍 Démarrage du scan de sécurité..."
+    
+    # Scan de l'image pour les vulnérabilités
+    - echo "📊 Scan des vulnérabilités..."
+    - |
+      trivy image \
+        --input image.tar \
+        --severity ${SEVERITY_THRESHOLD} \
+        --exit-code 0 \
+        --no-progress \
+        --format table
+    
+    # Génération d'un rapport JSON pour analyse
+    - echo "📄 Génération du rapport JSON..."
+    - |
+      trivy image \
+        --input image.tar \
+        --severity ${SEVERITY_THRESHOLD} \
+        --format json \
+        --output vulnerability-report.json
+    
+    # Analyse des résultats
+    - echo "📈 Analyse des résultats..."
+    - |
+      # Installation de jq pour parser le JSON
+      apk add --no-cache jq
+      
+      # Compter les vulnérabilités par sévérité
+      CRITICAL=$(jq '[.Results[].Vulnerabilities[]? | select(.Severity=="CRITICAL")] | length' vulnerability-report.json)
+      HIGH=$(jq '[.Results[].Vulnerabilities[]? | select(.Severity=="HIGH")] | length' vulnerability-report.json)
+      
+      echo "Vulnérabilités CRITICAL: ${CRITICAL}"
+      echo "Vulnérabilités HIGH: ${HIGH}"
+      
+      # Décision : bloquer si vulnérabilités critiques
+      if [ "$CRITICAL" -gt 0 ]; then
+        echo "❌ ÉCHEC: Vulnérabilités CRITICAL détectées!"
+        echo "Le pipeline est bloqué pour des raisons de sécurité."
+        exit 1
+      elif [ "$HIGH" -gt 5 ]; then
+        echo "⚠️ ATTENTION: Plus de 5 vulnérabilités HIGH détectées!"
+        echo "Considérez la mise à jour des dépendances."
+      else
+        echo "✅ SUCCÈS: Aucune vulnérabilité critique détectée."
+      fi
+  
+  # Artifacts à conserver
+  artifacts:
+    paths:
+      - vulnerability-report.json
+    expire_in: 30 days
+    # Format de rapport pour l'intégration GitLab
+    reports:
+      container_scanning: vulnerability-report.json
+
+# ==============================================
+# JOB 3: DÉPLOIEMENT (si scan réussi)
+# ==============================================
+deploy:staging:
+  stage: deploy
+  
+  # Ce job ne s'exécute que si le scan est OK
+  dependencies:
+    - scan:trivy
+  
+  script:
+    - echo "🚀 Déploiement vers staging..."
+    - echo "L'image ${IMAGE_NAME} est prête pour le déploiement."
+    
+  
+  # Règles d'exécution
+  rules:
+    # Déployer uniquement sur la branche main
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: on_success
+    # Pour les autres branches, déploiement manuel
+    - when: manual
