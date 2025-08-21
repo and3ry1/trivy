@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 {
   "name": "vulnerable-app",
   "version": "1.0.0",
@@ -16,3 +17,19 @@
     "qs": "^6.14.0"
   }
 }
+=======
+{
+  "name": "vulnerable-app",
+  "version": "1.0.0",
+  "description": "Demo app for Trivy scanning",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "express": "4.16.0",
+    "lodash": "4.17.11",
+    "axios": "0.18.0"
+  }
+}
+>>>>>>> e64dffa205e93865f32f60b4177af81eb1ccc747
