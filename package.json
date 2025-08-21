@@ -1,0 +1,14 @@
+{
+  "name": "vulnerable-app",
+  "version": "1.0.0",
+  "description": "Demo app for Trivy scanning",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "express": "4.16.0",
+    "lodash": "4.17.11",
+    "axios": "0.18.0"
+  }
+}
